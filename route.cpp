@@ -5,8 +5,15 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <ifaddrs.h>
+#include <sys/select.h>
 #include <arpa/inet.h>
 #include <cstring>
+#include <netinet/if_ether.h>
+#include <iostream>
+#include <asm/byteorder.h>
+#include <ifaddrs.h>
+#include <netinet/ip_icmp.h>
+#include <netinet/ether.h>
 
 int main(){
     int packet_socket;
@@ -63,6 +70,11 @@ int main(){
     //see which ones have data)
     printf("Ready to recieve now\n");
     while(1){
+        
+        //struct ipheader ip;
+        //struct arpheader arp;
+        struct ether_header* eth;
+        
         char buf[1500];
         struct sockaddr_ll recvaddr;
         int recvaddrlen=sizeof(struct sockaddr_ll);
@@ -79,6 +91,13 @@ int main(){
             continue;
         //start processing all others
         printf("Got a %d byte packet\n", n);
+        
+        eth = (struct ether_header*) buf;
+        //arp = (struct arpheader*) (buf + sizeof(struct ethheader));
+        //ip = (struct ipheader*) (buf + sizeof(struct ethheader));
+        
+        eth->ether_type = ntohs(eth->ether_type);
+        printf("Type: %x\n",eth->ether_type);
         
         //what else to do is up to you, you can send packets with send,
         //just like we used for TCP sockets (or you can use sendto, but it
