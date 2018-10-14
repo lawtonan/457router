@@ -5,6 +5,8 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <ifaddrs.h>
+#include <arpa/inet.h>
+#include <cstring>
 
 int main(){
     int packet_socket;
@@ -69,7 +71,7 @@ int main(){
         //this packet is incoming or outgoing (when using ETH_P_ALL, we
         //see packets in both directions. Only outgoing can be seen when
         //using a packet socket with some specific protocol)
-        int n = recvfrom(packet_socket, buf, 1500,0,(struct sockaddr*)&recvaddr, &recvaddrlen);
+        int n = recvfrom(packet_socket, buf, 1500,0,(struct sockaddr*)&recvaddr, (socklen_t *) &recvaddrlen);
         //ignore outgoing packets (we can't disable some from being sent
         //by the OS automatically, for example ICMP port unreachable
         //messages, so we will just ignore them here)
