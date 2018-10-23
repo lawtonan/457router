@@ -176,7 +176,7 @@ int main(){
                         strcpy(address, inet_ntoa(addresses[z].ip));
                         char tpaAddress[50];
                         strcpy(tpaAddress, inet_ntoa(tpaStruct));
-                        
+
                         if (strcmp(address, tpaAddress) == 0) {
                             isOurIp = 1;
                             break;
@@ -184,10 +184,10 @@ int main(){
                     }
                 } else if (htons(sourceAddr.sll_protocol) == 0x800) {
                     struct ip *ipHeader;
-                    ipHeader = (struct ip *)(packet +sizeof(struct ether_header) );
-                    
-                    destinationIp.s_addr=ipHeader->ip_dst.s_addr;
-                    
+                    ipHeader = (struct ip *)(packet + sizeof(struct ether_header) );
+
+                    destinationIp.s_addr = ipHeader->ip_dst.s_addr;
+
                     for (int z = 0; z < 4; z++) {
                         char address[50];
                         strcpy(address, inet_ntoa(addresses[z].ip));
@@ -202,30 +202,30 @@ int main(){
                 }
                 
                 
-                if(isOurIp) {
+                if (isOurIp) {
                     if (htons(sourceAddr.sll_protocol) == ETH_P_ARP) {
                         // do arp stuff
                         struct ether_arp *arp;
                         arp = (struct ether_arp *)(packet + sizeof(struct ether_header));
-                        
+
                         int addressIndex = 0;
                         unsigned long tpa;
                         memcpy(&tpa, arp->arp_tpa, 4);
                         struct in_addr tpaStruct;
                         tpaStruct.s_addr = tpa;
                         for (int z = 0; z < 4; z++) {
-                            
+
                             char address[50];
                             strcpy(address, inet_ntoa(addresses[z].ip));
                             char tpaAddress[50];
                             strcpy(tpaAddress, inet_ntoa(tpaStruct));
-                            
+
                             if (strcmp(address, tpaAddress) == 0) {
                                 addressIndex = z;
                                 break;
                             }
                         }
-                        
+
                         memcpy(ether->ether_dhost, ether->ether_shost, 6*sizeof(u_int8_t));
                         memcpy(ether->ether_shost, &(addresses[addressIndex].mac), 6*sizeof(u_int8_t));
                         
@@ -240,14 +240,14 @@ int main(){
                         memcpy(swapSenderIP, arp->arp_tpa, 4);
                         memcpy(arp->arp_tpa, arp->arp_spa, 4);
                         memcpy(arp->arp_spa, swapSenderIP, 4);
-                        
+
                         memcpy(&(spa.s_addr), arp->arp_spa, 4);
                         memcpy(&(tpa2.s_addr), arp->arp_tpa, 4);
-                        
+
                         arp->ea_hdr.ar_op = htons(ARPOP_REPLY);
-                        
+
                         send(i, packet, packetSize, 0);
-                        
+
                     } else if (htons(sourceAddr.sll_protocol) == 0x800) {
                         // Need to figure out which protocol this IP packet is for
                         struct ip *ipHeader;
@@ -258,19 +258,19 @@ int main(){
                         // if it's an ICMP packet
                         if (ipHeader->ip_p == 1) {
                             icmpHeader = (struct icmp *)(packet + sizeof(struct ether_header) + sizeof(struct ip) );
-                            
+
                             u_int8_t swap[6];
                             memcpy(swap, ether->ether_dhost, 6*sizeof(u_int8_t));
                             memcpy(ether->ether_dhost, ether->ether_shost, 6*sizeof(u_int8_t));
                             memcpy(ether->ether_shost, swap, 6*sizeof(u_int8_t));
-                            
+
                             struct in_addr swapIp;
                             swapIp.s_addr = ipHeader->ip_dst.s_addr;
                             ipHeader->ip_dst.s_addr = ipHeader->ip_src.s_addr;
                             ipHeader->ip_src.s_addr = swapIp.s_addr;
-                            
+
                             icmpHeader->icmp_type = 0;
-                            
+
                             send(i, packet, packetSize, 0);
                         }
                     }
