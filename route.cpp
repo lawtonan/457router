@@ -3,34 +3,29 @@
 #include <net/ethernet.h>
 #include <stdio.h>
 #include <errno.h>
-#include <sys/types.h>
 #include <ifaddrs.h>
 #include <string.h>
 #include <arpa/inet.h>
-#include <sys/socket.h>
-#include <sys/select.h>
-#include <linux/if_ether.h>
 #include <netinet/ether.h>
 #include <stdlib.h>
-#include <net/ethernet.h>
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
-#include <net/if_arp.h>
-#include <cstring>
+#include <netinet/ether.h>
+#include <zconf.h>
 
-// u_short computeChecksum(u_short *buf, int count) {
-//     register u_long sum = 0;
-//     
-//     while (count--) {
-//         sum += *buf++;
-//         if (sum & 0xFFFF0000) {
-//             sum &= 0xFFFF;
-//             sum++;
-//         }
-//     }
-//     
-//     return ~(sum & 0xFFFF);
-// }
+u_short computeChecksum(u_short *buf, int count) {
+    register u_long sum = 0;
+    
+    while (count--) {
+        sum += *buf++;
+        if (sum & 0xFFFF0000) {
+            sum &= 0xFFFF;
+            sum++;
+        }
+    }
+    
+    return ~(sum & 0xFFFF);
+}
 
 int main(){
     int packet_socket;
@@ -42,13 +37,13 @@ int main(){
     //address. You can use the names to match up which IPv4 address goes
     //with which MAC address.
     
-    struct addressPair {
+    struct routerStruct {
         u_int8_t mac[6];
         struct in_addr ip;
         char interfaceName[30];
         int fileDescriptor;
     };
-    struct addressPair addresses[4];
+    struct routerStruct addresses[4];
     
     struct ifaddrs *ifaddr, *tmp;
     if(getifaddrs(&ifaddr)==-1){
@@ -156,13 +151,12 @@ int main(){
                 
                 struct ether_header *ether;
                 ether = (struct ether_header *)packet;
+                struct ip *ipHeader;
+                u_short originalPacketChecksum = 0;
+                
                 
                 if (htons(sourceAddr.sll_protocol) == ETH_P_ARP) {
-                    // do arp stuff
-                    printf("ARP PACKET!!!\n");
-                    
                     struct ether_arp *arp;
-                    
                     arp = (struct ether_arp *)(packet + sizeof(struct ether_header));
                     
                     unsigned long tpa;
@@ -176,24 +170,30 @@ int main(){
                         strcpy(address, inet_ntoa(addresses[z].ip));
                         char tpaAddress[50];
                         strcpy(tpaAddress, inet_ntoa(tpaStruct));
-
+                        
                         if (strcmp(address, tpaAddress) == 0) {
                             isOurIp = 1;
                             break;
                         }
                     }
                 } else if (htons(sourceAddr.sll_protocol) == 0x800) {
-                    struct ip *ipHeader;
+                    
                     ipHeader = (struct ip *)(packet + sizeof(struct ether_header) );
-
+                    
+                    originalPacketChecksum = ipHeader->ip_sum;
+                    ipHeader->ip_sum = 0;
+                    if (computeChecksum((u_short *) ipHeader, 10) != originalPacketChecksum) {
+                        continue;
+                    }
+                    
                     destinationIp.s_addr = ipHeader->ip_dst.s_addr;
-
+                    
                     for (int z = 0; z < 4; z++) {
                         char address[50];
                         strcpy(address, inet_ntoa(addresses[z].ip));
                         char tpaAddress[50];
                         strcpy(tpaAddress, inet_ntoa(ipHeader->ip_dst));
-
+                        
                         if (strcmp(address, tpaAddress) == 0) {
                             isOurIp = 1;
                             break;
@@ -207,25 +207,25 @@ int main(){
                         // do arp stuff
                         struct ether_arp *arp;
                         arp = (struct ether_arp *)(packet + sizeof(struct ether_header));
-
+                        
                         int addressIndex = 0;
                         unsigned long tpa;
                         memcpy(&tpa, arp->arp_tpa, 4);
                         struct in_addr tpaStruct;
                         tpaStruct.s_addr = tpa;
                         for (int z = 0; z < 4; z++) {
-
+                            
                             char address[50];
                             strcpy(address, inet_ntoa(addresses[z].ip));
                             char tpaAddress[50];
                             strcpy(tpaAddress, inet_ntoa(tpaStruct));
-
+                            
                             if (strcmp(address, tpaAddress) == 0) {
                                 addressIndex = z;
                                 break;
                             }
                         }
-
+                        
                         memcpy(ether->ether_dhost, ether->ether_shost, 6*sizeof(u_int8_t));
                         memcpy(ether->ether_shost, &(addresses[addressIndex].mac), 6*sizeof(u_int8_t));
                         
@@ -240,14 +240,14 @@ int main(){
                         memcpy(swapSenderIP, arp->arp_tpa, 4);
                         memcpy(arp->arp_tpa, arp->arp_spa, 4);
                         memcpy(arp->arp_spa, swapSenderIP, 4);
-
+                        
                         memcpy(&(spa.s_addr), arp->arp_spa, 4);
                         memcpy(&(tpa2.s_addr), arp->arp_tpa, 4);
-
+                        
                         arp->ea_hdr.ar_op = htons(ARPOP_REPLY);
-
+                        
                         send(i, packet, packetSize, 0);
-
+                        
                     } else if (htons(sourceAddr.sll_protocol) == 0x800) {
                         // Need to figure out which protocol this IP packet is for
                         struct ip *ipHeader;
@@ -258,19 +258,19 @@ int main(){
                         // if it's an ICMP packet
                         if (ipHeader->ip_p == 1) {
                             icmpHeader = (struct icmp *)(packet + sizeof(struct ether_header) + sizeof(struct ip) );
-
+                            
                             u_int8_t swap[6];
                             memcpy(swap, ether->ether_dhost, 6*sizeof(u_int8_t));
                             memcpy(ether->ether_dhost, ether->ether_shost, 6*sizeof(u_int8_t));
                             memcpy(ether->ether_shost, swap, 6*sizeof(u_int8_t));
-
+                            
                             struct in_addr swapIp;
                             swapIp.s_addr = ipHeader->ip_dst.s_addr;
                             ipHeader->ip_dst.s_addr = ipHeader->ip_src.s_addr;
                             ipHeader->ip_src.s_addr = swapIp.s_addr;
-
+                            
                             icmpHeader->icmp_type = 0;
-
+                            
                             send(i, packet, packetSize, 0);
                         }
                     }
@@ -284,7 +284,8 @@ int main(){
                     strcpy(destinationIpStr, inet_ntoa(destinationIp));
                     char line[50];
                     char interface[50];
-                    while(fgets(line, 50, f) != NULL) {
+                    char *error;
+                    while((error = fgets(line, 50, f)) != NULL) {
                         if (strncmp(line+9, "1", 1) == 0) {
                             if (strncmp(destinationIpStr, line, 4) == 0) {
                                 // we found the matching entry for the destination IP
@@ -299,7 +300,100 @@ int main(){
                             }
                         }
                     }
+                    
+                    ipHeader->ip_ttl--;
+                    if (ipHeader->ip_ttl <= 0) {
+                        printf("ttl is 0\n");
+                        char icmpTime[98];
+                        
+                        struct ether_header *icmpTimeEther;
+                        struct ip *icmpTimeIp;
+                        struct icmp *icmpTimeHdr;
+                        icmpTimeEther = (struct ether_header *)icmpTime;
+                        icmpTimeIp = (struct ip *)(icmpTime + sizeof(struct ether_header));
+                        icmpTimeHdr = (struct icmp *)(icmpTime + sizeof(struct ether_header) + sizeof(struct ip));
+                        
+                        memcpy(icmpTimeEther->ether_shost, ether->ether_dhost, 6);
+                        memcpy(icmpTimeEther->ether_dhost, ether->ether_shost, 6);
+                        icmpTimeEther->ether_type = ether->ether_type;
+                        
+                        memcpy(icmpTimeIp, ipHeader, sizeof(struct ip));
+                        icmpTimeIp->ip_dst.s_addr = ipHeader->ip_src.s_addr;
+                        int addressIndex = 0;
+                        for (int z = 0; z < 4; z++) {
+                            if (strcmp(interface, addresses[z].interfaceName) == 0) {
+                                addressIndex = z;
+                                break;
+                            }
+                        }
+                        icmpTimeIp->ip_src.s_addr = addresses[addressIndex].ip.s_addr;
+                        icmpTimeIp->ip_ttl = 64;
+                        icmpTimeIp->ip_p = 1;
+                        icmpTimeIp->ip_sum = 0;
+                        icmpTimeIp->ip_sum = computeChecksum((u_short *)icmpTimeIp, 10);
+                        
+                        // change ICMP header, and add 8 bytes of original packet
+                        icmpTimeHdr->icmp_type = 11; // 11 = Time Exceeded Msg
+                        icmpTimeHdr->icmp_code = 0; // 0 = TTL reached 0
+                        int zero = 0;
+                        memcpy((icmpTimeHdr + 4), &(zero), 4);
+                        memcpy(&(icmpTimeHdr->icmp_ip), ipHeader, sizeof(struct ip)+8);
+                        icmpTimeHdr->icmp_ip.ip_sum = originalPacketChecksum;
+                        icmpTimeHdr->icmp_cksum = 0;
+                        icmpTimeHdr->icmp_cksum = computeChecksum((u_short *) icmpTimeHdr, 18);
+                        
+                        send(i, icmpTime, sizeof(icmpTime), 0);
+                        
+                        continue;
+                    }
+                    
                     fclose(f);
+                    
+                    if (error == NULL) {
+                        printf("Network unreachable\n");
+                        
+                        char icmpNetwork[98];
+                        
+                        struct ether_header *icmpNetworkEther;
+                        struct ip *icmpNetworkIp;
+                        struct icmp *icmpNetworkHdr;
+                        icmpNetworkEther = (struct ether_header *)icmpNetwork;
+                        icmpNetworkIp = (struct ip *)(icmpNetwork + sizeof(struct ether_header));
+                        icmpNetworkHdr = (struct icmp *)(icmpNetwork + sizeof(struct ether_header) + sizeof(struct ip));
+                        
+                        memcpy(icmpNetworkEther->ether_shost, ether->ether_dhost, 6);
+                        memcpy(icmpNetworkEther->ether_dhost, ether->ether_shost, 6);
+                        icmpNetworkEther->ether_type = ether->ether_type;
+                        
+                        memcpy(icmpNetworkIp, ipHeader, sizeof(struct ip));
+                        icmpNetworkIp->ip_dst.s_addr = ipHeader->ip_src.s_addr;
+                        int addressIndex = 0;
+                        for (int z = 0; z < 4; z++) {
+                            if (strcmp(interface, addresses[z].interfaceName) == 0) {
+                                addressIndex = z;
+                                break;
+                            }
+                        }
+                        icmpNetworkIp->ip_src.s_addr = addresses[addressIndex].ip.s_addr;
+                        icmpNetworkIp->ip_ttl = 64;
+                        icmpNetworkIp->ip_p = 1;
+                        icmpNetworkIp->ip_sum = 0;
+                        icmpNetworkIp->ip_sum = computeChecksum((u_short *)icmpNetworkIp, 10);
+                        
+                        // change ICMP header, and add 8 bytes of original packet
+                        icmpNetworkHdr->icmp_type = 3; // 3 = Destination unreachable
+                        icmpNetworkHdr->icmp_code = 0; // 0 = network
+                        int zero = 0;
+                        memcpy((icmpNetworkHdr + 4), &(zero), 4);
+                        memcpy(&(icmpNetworkHdr->icmp_ip), ipHeader, sizeof(struct ip)+8);
+                        icmpNetworkHdr->icmp_ip.ip_sum = originalPacketChecksum;
+                        icmpNetworkHdr->icmp_cksum = 0;
+                        icmpNetworkHdr->icmp_cksum = computeChecksum((u_short *) icmpNetworkHdr, 18);
+                        
+                        send(i, icmpNetwork, sizeof(icmpNetwork), 0);
+                        
+                        continue;
+                    }
                     
                     //THIS IS WHERE WE'LL PICK UP
                     char arpRequest[1500];
@@ -359,15 +453,68 @@ int main(){
                     
                     send(arpSocket, arpRequest, 42, 0);
                     
+                    struct timeval timeout;
+                    timeout.tv_sec = 1;
+                    timeout.tv_usec = 0;
+                    setsockopt(arpSocket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+                    
                     char arpResponse[50];
                     int arpResponseSize = recv(arpSocket, arpResponse, 50, 0);
-
+                    if (arpResponseSize <= 0) {
+                        printf("Host unreachable\n");
+                        char icmpHost[98];
+                        
+                        struct ether_header *icmpHostEther;
+                        struct ip *icmpHostIp;
+                        struct icmp *icmpHostHdr;
+                        icmpHostEther = (struct ether_header *)icmpHost;
+                        icmpHostIp = (struct ip *)(icmpHost + sizeof(struct ether_header));
+                        icmpHostHdr = (struct icmp *)(icmpHost + sizeof(struct ether_header) + sizeof(struct ip));
+                        
+                        memcpy(icmpHostEther->ether_shost, ether->ether_dhost, 6);
+                        memcpy(icmpHostEther->ether_dhost, ether->ether_shost, 6);
+                        icmpHostEther->ether_type = ether->ether_type;
+                        
+                        memcpy(icmpHostIp, ipHeader, sizeof(struct ip));
+                        icmpHostIp->ip_dst.s_addr = ipHeader->ip_src.s_addr;
+                        int addressIndex = 0;
+                        for (int z = 0; z < 4; z++) {
+                            if (strcmp(interface, addresses[z].interfaceName) == 0) {
+                                addressIndex = z;
+                                break;
+                            }
+                        }
+                        icmpHostIp->ip_src.s_addr = addresses[addressIndex].ip.s_addr;
+                        icmpHostIp->ip_ttl = 64;
+                        icmpHostIp->ip_p = 1;
+                        icmpHostIp->ip_sum = 0;
+                        icmpHostIp->ip_sum = computeChecksum((u_short *)icmpHostIp, 10);
+                        
+                        // change ICMP header, and add 8 bytes of original packet
+                        icmpHostHdr->icmp_type = 3; // 3 = Destination unreachable
+                        icmpHostHdr->icmp_code = 1; // 1 = host
+                        int zero = 0;
+                        memcpy((icmpHostHdr + 4), &(zero), 4);
+                        memcpy(&(icmpHostHdr->icmp_ip), ipHeader, sizeof(struct ip)+8);
+                        icmpHostHdr->icmp_ip.ip_sum = originalPacketChecksum;
+                        icmpHostHdr->icmp_cksum = 0;
+                        icmpHostHdr->icmp_cksum = computeChecksum((u_short *) icmpHostHdr, 18);
+                        
+                        send(i, icmpHost, sizeof(icmpHost), 0);
+                    }
+                    
+                    setsockopt(arpSocket, SOL_SOCKET, SO_RCVTIMEO, NULL, 0);
+                    
+                    
                     // Add MAC to original packet
                     struct ether_header *arpResponseStruct;
                     arpResponseStruct = (struct ether_header *)(arpResponse);
                     memcpy(ether->ether_shost, addresses[arpSocketIndex].mac, 6);
                     memcpy(ether->ether_dhost, arpResponseStruct->ether_shost, 6);
-
+                    
+                    ipHeader->ip_sum = 0;
+                    ipHeader->ip_sum = computeChecksum((u_short *) ipHeader, 10);
+                    
                     // Forward original packet
                     printf("Forwarding packet to %s\n", ether_ntoa((struct ether_addr *)ether->ether_dhost));
                     send(arpSocket, packet, packetSize, 0);
